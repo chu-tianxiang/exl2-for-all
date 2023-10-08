@@ -1,0 +1,4 @@
+exllamav2
+transformers
+accelerate
+datasets
