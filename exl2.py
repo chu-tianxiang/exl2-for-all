@@ -181,7 +181,8 @@ class Exl2Quantizer(object):
                 elif isinstance(layer, Conv1D):
                     in_features = layer.weight.shape[0]
                     out_features = layer.weight.shape[1]
-                new_layer = QuantLinear(in_features, out_features, True)
+                bias = hasattr(layer, "bias") and layer.bias is not None
+                new_layer = QuantLinear(in_features, out_features, bias)
                 new_layer.device = device
                 setattr(module, attr, new_layer.to(device))
         for name1, child in module.named_children():
