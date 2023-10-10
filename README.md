@@ -19,7 +19,7 @@ from exl2 import Exl2Quantizer
 model_name = "meta-llama/Llama-2-7b-hf"
 quant_dir = "llama-exl2-4bits"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16)
+model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16, use_flash_attention_2=True)
 
 quant = Exl2Quantizer(bits=4.0, dataset="c4")
 quant_model = quant.quantize_model(model, tokenizer)

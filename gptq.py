@@ -260,6 +260,12 @@ class GPTQ:
         """
         self.hessian = None
         self.hessian_inv = None
+        self.qweight = None
+        self.g_idx = None
+        self.invperm = None
+        self.scale = None
+        self.qscale = None
+        self.qscale_max = None
         torch.cuda.empty_cache()
 
     def pack(self, key: str, qparams: QParams) -> Dict[str, torch.Tensor]:
@@ -278,9 +284,9 @@ class GPTQ:
         output = {}
         if key != "":
             key += "."
-        output[key + "q_invperm"] = self.invperm.to(torch.int)
-        output[key + "q_scale_max"] = self.qscale_max
-        output[key + "q_groups"] = self.qgroups
+        output[key + "q_invperm"] = self.invperm.to(torch.int).cpu()
+        output[key + "q_scale_max"] = self.qscale_max.cpu()
+        output[key + "q_groups"] = self.qgroups.cpu()
         columns = self.columns
         rem_rows = self.rows
         padding = -columns % 32
@@ -296,7 +302,7 @@ class GPTQ:
             device=self.dev)
         if qparams.scale_bits == 4:
             ext_c.pack_rows_4(qst, qst_packed)
-        output[key + "q_scale"] = qst_packed
+        output[key + "q_scale"] = qst_packed.cpu()
 
         qwt_packed = []
         i = 0
@@ -325,8 +331,8 @@ class GPTQ:
             rem_rows -= rows
 
         qwt_packed = torch.cat(qwt_packed, dim=0)
-        output[key + "q_weight"] = qwt_packed
+        output[key + "q_weight"] = qwt_packed.cpu()
         if self.layer.bias is not None:
-            output[key + "bias"] = self.layer.bias.clone().half()
+            output[key + "bias"] = self.layer.bias.clone().half().cpu()
 
         return output

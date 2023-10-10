@@ -90,8 +90,9 @@ class Exl2Quantizer(object):
     def __init__(
         self,
         bits: float = 4,
-        head_bits: int = 4,
+        head_bits: int = 8,
         dataset: Optional[Union[List[str], str]] = None,
+        cache_examples_on_gpu: bool = False,
         model_seqlen: int = None,
         damp_percent: float = 0.01,
         true_sequential: bool = True,
@@ -104,6 +105,7 @@ class Exl2Quantizer(object):
         self.bits = bits
         self.head_bits = head_bits
         self.dataset = dataset
+        self.cache_examples_on_gpu = cache_examples_on_gpu
         self.damp_percent = damp_percent
         self.model_seqlen = model_seqlen
         self.true_sequential = true_sequential
@@ -362,6 +364,7 @@ class Exl2Quantizer(object):
                 if module is None:
                     raise ValueError(
                         f"Module {module_name} was not found in model")
+                module.to(device)
 
         torch.cuda.empty_cache()
 
@@ -410,6 +413,8 @@ class Exl2Quantizer(object):
                         add_batch(name)))
                 # update Hessian for each layer in subset_layers thanks to the hook
                 for j in range(len(dataset)):
+                    if not self.cache_examples_on_gpu:
+                        layer_inputs[j] = layer_inputs[j].to(get_device(block))
                     # the args are already on the gpu
                     # don't need to store the output
                     block(layer_inputs[j], **layer_input_kwargs[j])
@@ -441,12 +446,15 @@ class Exl2Quantizer(object):
                         quant_data = quant_method[name].pack("", qp)
                         result[
                             f"{self.block_name_to_quantize}.{i}.{name}"] = quant_data
-                        quant_method[name].free()
+                    del quant_method[name]
+                    torch.cuda.empty_cache()
                 del subset_layers
 
             for j in range(len(dataset)):
                 layer_output = block(layer_inputs[j],
                                      **layer_input_kwargs[j])[0]
+                if not self.cache_examples_on_gpu:
+                    layer_output = layer_output.to('cpu')
                 layer_outputs.append(layer_output)
             # put back to device
             if not has_device_map:
@@ -471,6 +479,8 @@ class Exl2Quantizer(object):
         quant_method[self.lm_head_name] = GPTQ(lm_head)
         handle = lm_head.register_forward_hook(add_batch(self.lm_head_name))
         for j in range(len(dataset)):
+            if not self.cache_examples_on_gpu:
+                layer_inputs[j] = layer_inputs[j].to(get_device(module))
             # the args are already on the gpu
             # don't need to store the output
             module(layer_inputs[j])
@@ -483,7 +493,7 @@ class Exl2Quantizer(object):
         quant_method[self.lm_head_name].quantize(keep_qweight=True)
         result[self.lm_head_name] = quant_method[self.lm_head_name].pack(
             "", qp)
-        quant_method[self.lm_head_name].free()
+        del quant_method[self.lm_head_name]
         if not has_device_map:
             module = module.to(device)
         torch.cuda.empty_cache()
