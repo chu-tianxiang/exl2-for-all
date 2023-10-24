@@ -31,8 +31,9 @@ class GPTQ:
 
     Args:
         layer: The linear layer to be quantized.
+        cache_examples_on_gpu:  whether to cache the input in gpu, which is faster but consumes more memory
     """
-    def __init__(self, layer: nn.Module) -> None:
+    def __init__(self, layer: nn.Module, cache_examples_on_gpu: bool = False) -> None:
         self.layer = layer
         self.dev = layer.weight.device
 
@@ -47,6 +48,7 @@ class GPTQ:
         self.hessian = torch.zeros((self.rows, self.rows), device=self.dev)
         self.nsamples = 0
         self.inps = []
+        self.cache_examples_on_gpu = cache_examples_on_gpu
         self.quantizer = AdaptiveQuantizer()
 
     def configure(self,
@@ -89,7 +91,7 @@ class GPTQ:
             inp: The input batch to be added.
         """
         tmp = inp.shape[0]
-        self.inps.append(inp)
+        self.inps.append(inp if self.cache_examples_on_gpu else inp.cpu())
         if isinstance(self.layer, nn.Linear) or isinstance(
                 self.layer, transformers.Conv1D):
             if len(inp.shape) == 3:

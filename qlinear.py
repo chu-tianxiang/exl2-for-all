@@ -80,10 +80,9 @@ class QuantLinear(nn.Module):
         self.q_handle = ext_make_q_matrix(self.q_tensors, temp_dq)
 
     def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
-        self.q_weight = state_dict[prefix + "q_weight"].clone()
-        self.q_groups = state_dict[prefix + "q_groups"].clone()
-        self.q_scale = state_dict[prefix + "q_scale"].clone()
-        self.q_scale_max = state_dict[prefix + "q_scale_max"].clone()
+        for key in ["q_weight", "q_groups", "q_scale", "q_scale_max"]:
+            if prefix + key in state_dict:
+                setattr(self, key, state_dict[prefix + key].clone())
         super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     def forward(self, x, force_cuda=False):

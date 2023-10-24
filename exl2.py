@@ -46,8 +46,9 @@ logger = getLogger(__name__)
 def do_measure(quantizer):
     original_weight = quantizer.layer.weight.data.clone()
     origin_layer_outputs = []
+    device = get_device(quantizer.layer)
     for inp in quantizer.inps:
-        layer_output = quantizer.layer(inp)
+        layer_output = quantizer.layer(inp.to(device))
         origin_layer_outputs.append(
             layer_output.view(-1, layer_output.shape[-1]).float())
     result = {"numel": quantizer.rows * quantizer.columns, "options": []}
@@ -61,11 +62,11 @@ def do_measure(quantizer):
         dsum = 0.0
         dcount = 0.0
         for j, inp in enumerate(quantizer.inps):
-            layer_output = quantizer.layer(inp)
+            layer_output = quantizer.layer(inp.to(device))
             layer_output = layer_output.view(-1, layer_output.shape[-1])
             rfn = torch.linalg.norm(
                 layer_output.float() - origin_layer_outputs[j],
-                'fro') / torch.linalg.norm(layer_output.float(), 'fro')
+                'fro') / torch.linalg.norm(origin_layer_outputs[j].float(), 'fro')
             dsum += rfn * inp.shape[0]
             dcount += inp.shape[0]
         option = {
@@ -93,9 +94,9 @@ class Exl2Quantizer(object):
         head_bits: int = 8,
         dataset: Optional[Union[List[str], str]] = None,
         cache_examples_on_gpu: bool = False,
-        model_seqlen: int = None,
-        damp_percent: float = 0.01,
-        true_sequential: bool = True,
+        model_seqlen: int = 2048,
+        damp_percent: float = 0.07,
+        sequential: bool = True,
         block_name_to_quantize: Optional[str] = None,
         batch_size: int = 1,
         pad_token_id: Optional[int] = None,
@@ -108,7 +109,7 @@ class Exl2Quantizer(object):
         self.cache_examples_on_gpu = cache_examples_on_gpu
         self.damp_percent = damp_percent
         self.model_seqlen = model_seqlen
-        self.true_sequential = true_sequential
+        self.sequential = sequential
         self.block_name_to_quantize = block_name_to_quantize
         self.batch_size = batch_size
         self.pad_token_id = pad_token_id
@@ -381,9 +382,14 @@ class Exl2Quantizer(object):
             if not has_device_map or get_device(block) == torch.device("cpu"):
                 block = block.to(0)
             layers = get_layers(block)
-            if self.true_sequential:
-                # lazy sequential but works well
-                layers_name_list = [[key] for key in layers.keys()]
+            if self.sequential and not measure:
+                # This is the order used in exllamav2 which is different from the
+                # true-sequential in GPTQ.
+                # Surprisingly, it yields much better perplxity than true-sequential.
+                prefix_list = list(dict.fromkeys(key.split(".")[0] for key in layers.keys()))
+                layers_name_list = [
+                    [key for key in layers.keys() if key.startswith(prefix)] for prefix in prefix_list
+                ]
             else:
                 layers_name_list = [list(layers.keys())]
             logger.info(f"Module to quantize {layers_name_list}")
@@ -399,7 +405,7 @@ class Exl2Quantizer(object):
                 handles = []
                 # add hook for each layer in subset_layers
                 for name in subset_layers:
-                    quant_method[name] = GPTQ(subset_layers[name])
+                    quant_method[name] = GPTQ(subset_layers[name], self.cache_examples_on_gpu)
 
                     def add_batch(name):
 
@@ -476,7 +482,7 @@ class Exl2Quantizer(object):
             module = module.to(0)
         self.lm_head_name = module_names_after_last_block[0]
         lm_head = recurse_getattr(model, self.lm_head_name)
-        quant_method[self.lm_head_name] = GPTQ(lm_head)
+        quant_method[self.lm_head_name] = GPTQ(lm_head, True)
         handle = lm_head.register_forward_hook(add_batch(self.lm_head_name))
         for j in range(len(dataset)):
             if not self.cache_examples_on_gpu:
