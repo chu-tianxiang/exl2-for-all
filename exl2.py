@@ -100,6 +100,7 @@ class Exl2Quantizer(object):
         block_name_to_quantize: Optional[str] = None,
         batch_size: int = 1,
         pad_token_id: Optional[int] = None,
+        modules_to_not_convert: Optional[List] = None,
         *args,
         **kwargs,
     ):
@@ -116,6 +117,7 @@ class Exl2Quantizer(object):
         self.quant_method = 'EXL2'
         self.module_name_preceding_first_block = None
         self.lm_head_name = None
+        self.modules_to_not_convert = modules_to_not_convert
         if not (0 < self.damp_percent < 1):
             raise ValueError("damp_percent must between 0 and 1.")
 
@@ -132,7 +134,8 @@ class Exl2Quantizer(object):
             self.block_name_to_quantize = get_block_name_with_pattern(model)
         block_name = self.block_name_to_quantize
         layers_to_be_replaced = list(
-            get_layers(model, prefix=block_name).keys())
+            get_layers(model, prefix=block_name,
+                       skip=self.modules_to_not_convert).keys())
         module_names_after_last_block = get_preceding_modules(
             model, self.block_name_to_quantize, reverse=True)
         layers_to_be_replaced += [module_names_after_last_block[0]]
@@ -382,7 +385,7 @@ class Exl2Quantizer(object):
             # move block to cuda if needed
             if not has_device_map or get_device(block) == torch.device("cpu"):
                 block = block.to(0)
-            layers = get_layers(block)
+            layers = get_layers(block, skip=self.modules_to_not_convert)
             if self.sequential and not measure:
                 # This is the order used in exllamav2 which is different from the
                 # true-sequential in GPTQ.
@@ -517,7 +520,7 @@ class Exl2Quantizer(object):
                 A mapping of the layer name and the data needed to pack the layer
         """
         logger.info("Packing model...")
-        layers = get_layers(model)
+        layers = get_layers(model, skip=self.modules_to_not_convert)
         layers = {n: layers[n] for n in quantizers}
         self._replace_by_quant_layers(model, quantizers)
         qlayers = get_layers(model, [QuantLinear])

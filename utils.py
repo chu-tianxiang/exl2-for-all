@@ -12,7 +12,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 from logging import getLogger
-from typing import Optional, Union
+from typing import Optional, Union, List
 import functools
 
 import torch
@@ -28,6 +28,7 @@ logger = getLogger(__name__)
 def get_layers(module: nn.Module,
                layers=[Conv1D, nn.Conv2d, nn.Linear],
                prefix: Optional[str] = None,
+               skip: Optional[List] = None,
                name: str = ""):
     """
     Get all the layers with a specific prefix in the module
@@ -44,19 +45,23 @@ def get_layers(module: nn.Module,
     Returns:
         `Dict[str,Union[Conv1D, nn.Conv2d, nn.Linear]]`: Mapping of the name of the layer and the actual layer
     """
+    if skip is None:
+        skip = []
     for layer in layers:
         if isinstance(module, layer):
             if prefix is not None:
-                if name.startswith(prefix):
+                if name.startswith(prefix) and all(pattern not in name for pattern in skip):
                     return {name: module}
             else:
-                return {name: module}
+                if all(pattern not in name for pattern in skip):
+                    return {name: module}
     res = {}
     for name1, child in module.named_children():
         res.update(
             get_layers(child,
                        layers=layers,
                        prefix=prefix,
+                       skip=skip,
                        name=name + "." + name1 if name != "" else name1))
     return res
 

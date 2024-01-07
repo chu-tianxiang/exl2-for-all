@@ -96,7 +96,8 @@ class Exl2ForCausalLM(nn.Module):
         trust_remote_code: bool = True,
         safetensors: bool = True,
         no_split_module_classes: Optional[List[str]] = None,
-        device_map: Optional[Dict[str, int]] = None
+        modules_to_not_convert: Optional[List] = None,
+        device_map: Optional[Dict[str, int]] = None,
     ) -> "Exl2ForCausalLM":
         """
         Initializes an Exl2ForCausalLM instance from a quantized model.
@@ -122,7 +123,7 @@ class Exl2ForCausalLM(nn.Module):
                 config,
                 trust_remote_code=trust_remote_code,
                 torch_dtype=torch_dtype)
-        quantizer = Exl2Quantizer()
+        quantizer = Exl2Quantizer(modules_to_not_convert=modules_to_not_convert)
         model = quantizer.convert_model(model)
         # move model to cpu
         model = model._apply(lambda t: torch.zeros_like(t, device="cpu")

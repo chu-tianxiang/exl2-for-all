@@ -43,6 +43,13 @@ output_ids = quant_model.generate(input_ids, do_sample=True)
 print(tokenizer.decode(output_ids[0]))
 ```
 
+An additional parameter is `modules_to_not_convert` because Mixtral gate layer is often unquantized.
+```python
+quant_model = Exl2ForCausalLM.from_quantized("turboderp/Mixtral-8x7B-instruct-exl2",
+                                             revision="3.0bpw",
+                                             modules_to_not_convert=["gate"])
+```
+
 # Perplexity
 LLaMA-2 7b on wikitext.
 | bpw | perplexity |
