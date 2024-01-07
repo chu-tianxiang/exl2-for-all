@@ -3,6 +3,8 @@
 EXL2 is a mixed-bits quantization method proposed in [exllama v2](https://github.com/turboderp/exllamav2). This repo is created from exllamav2 with support for more model architectures.
 Unlike repos like [AutoAWQ](https://github.com/casper-hansen/AutoAWQ) and [AutoGPTQ](https://github.com/PanQiWei/AutoGPTQ) which include various kernel fusions, this repo only contains minimal code for quantization and inference. An example of patching LLaMA for better performance (~103 tokens/s) is included in `example` folder though.
 
+Note: exllamav2 changed the optimization algorithm in v0.0.11 which uses block-level parameters specific to LLaMA-like architectures, which makes it hard to adapt to universal model structures. I'll keep this repo as it is for now.
+
 # Installation
 
 exllama v2 kernels have to installed first. See `requirements.txt` for dependencies.

@@ -22,6 +22,22 @@ def _torch_device(idx):
     if idx == -1: return "cpu"
     return f"cuda:{idx}"
 
+def make_group_map(q_groups, num_qrows):
+    gr = q_groups.tolist()
+    group_map = []
+    num_groups = len(gr) // 2
+
+    for i in range(num_groups):
+        bits = gr[i * 2]
+        if i < num_groups - 1:
+            qrows = gr[i * 2 + 3] - gr[i * 2 + 1]
+        else:
+            qrows = num_qrows - gr[i * 2 + 1]
+        rows = qrows * 32 // bits
+        for j in range(rows):
+            group_map += [i]
+            group_map += [rows - j]
+    return torch.tensor(group_map, dtype=torch.short, device=q_groups.device)
 
 def ext_make_q_matrix(w: dict, temp_dq, key: str = None):
     """
@@ -30,8 +46,10 @@ def ext_make_q_matrix(w: dict, temp_dq, key: str = None):
     w["q_scale_max"] /= 256
     w["q_perm"] = w["q_perm"].short()
     w["q_invperm"] = w["q_invperm"].short()
+    if "q_group_map" not in w:
+        w["q_group_map"] = make_group_map(w["q_groups"], w["q_weight"].shape[0])
     return ext_c.make_q_matrix(w["q_weight"], w["q_perm"], w["q_invperm"],
-                               w["q_scale"], w["q_scale_max"], w["q_groups"],
+                               w["q_scale"], w["q_scale_max"], w["q_groups"], w["q_group_map"],
                                none_tensor, none_tensor, none_tensor, temp_dq)
 
 

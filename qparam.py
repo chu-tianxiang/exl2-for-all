@@ -9,10 +9,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import math
 from typing import Tuple, Dict, List, Any
 
 class QParams:
-    def __init__(self, group_size: int, bits: List[int], bits_prop: List[float], scale_bits: int):
+    def __init__(self, group_size: dict, bits: List[int], bits_prop: List[float], scale_bits: int):
         """
         Represents the quantization parameters for a specific layer.
 
@@ -22,10 +23,16 @@ class QParams:
             bits_prop: A list of the proportion for each bits.
             scale_bits: The number of bits to use for scaling the quantized values.
         """
-        self.group_size = group_size
         self.bits = bits
         self.bits_prop = bits_prop
         self.scale_bits = scale_bits
+        if isinstance(group_size, dict):
+            self.group_size = {int(b): g for b, g in group_size.items()}
+        elif isinstance(group_size, list):
+            assert len(group_size) == len(bits)
+            self.group_size = {b: g for g, b in zip(group_size, bits)}
+        else:
+            self.group_size = {b: group_size for b in bits }
         self.desc = self.get_desc()
 
     def get_dict(self) -> Dict[str, Any]:
@@ -69,21 +76,23 @@ class QParams:
         rows = shape[0]
         columns = shape[1]
 
-        groups = (rows + self.group_size - 1) // self.group_size
+        groups = 0
+        remaining_rows = rows
+        bits_groups = []
+        for b, p in zip(self.bits, self.bits_prop):
+            gsz = self.group_size[b]
+            g = math.ceil(min(rows * p, remaining_rows) / gsz)
+            groups += g
+            remaining_rows -= g * gsz
+            bits_groups.append(g)
 
-        g128 = (rows + 128 - 1) // 128
-        bits_groups = [
-            max(round(g128 * p), 1) * 128 // self.group_size
-            for p in self.bits_prop
-        ]
-        e = sum(bits_groups) - groups
-        bits_groups[-1] -= e
+        assert remaining_rows <= 0
 
         total_bits = 0
         tr = rows
 
         for g, b in zip(bits_groups, self.bits):
-            r = self.group_size * g
+            r = self.group_size[b] * g
             c = columns
             if r > tr: r = tr
             tr -= r
@@ -120,8 +129,9 @@ class QParams:
         s = ""
         for b, p in zip(self.bits, self.bits_prop):
             if s != "": s += "/"
-            s += f"{p}:{b}b"
-        s += f" {self.group_size}g s{self.scale_bits}"
+            g = self.group_size[b]
+            s += f"{p}:{b}b_{g}g"
+        s += f" s{self.scale_bits}"
         return s
 
 

@@ -370,13 +370,14 @@ class Exl2Quantizer(object):
         torch.cuda.empty_cache()
 
         # Step 3: Quantization
+        keyword = "measuring" if measure else "quantizing"
         result = {}
         for i, block in enumerate(
                 tqdm(
                     blocks,
-                    desc=f"Quantizing {self.block_name_to_quantize} blocks ")):
+                    desc=f"{keyword} {self.block_name_to_quantize} blocks ")):
             logger.info(
-                f"Start quantizing block {self.block_name_to_quantize} {i + 1}/{len(blocks)}"
+                f"Start {keyword} block {self.block_name_to_quantize} {i + 1}/{len(blocks)}"
             )
             # move block to cuda if needed
             if not has_device_map or get_device(block) == torch.device("cpu"):
@@ -396,7 +397,7 @@ class Exl2Quantizer(object):
             for subset_name_list in tqdm(
                     layers_name_list,
                     leave=False,
-                    desc="Quantizing layers inside the block"):
+                    desc=f"{keyword} layers inside the block"):
                 subset_layers = {
                     name: layers[name]
                     for name in subset_name_list

@@ -52,36 +52,36 @@ class GPTQ:
         self.quantizer = AdaptiveQuantizer()
 
     def configure(self,
-                  group_size: int = 128,
-                  bits: Optional[Union[int, List[int]]] = None,
+                  group_size: dict,
+                  bits: Optional[List[int]] = None,
                   bits_prop: Optional[List[float]] = None,
                   scale_bits: int = 4) -> None:
         """
         Configures the quantization settings.
 
         Args:
-            group_size: The size of each quantization group.
-            bits: The number of bits used for quantization. Can be a single integer or a list of integers for different groups.
+            dict: The size of each bits.
+            bits: The number of bits used for quantization. A list of integers for different groups.
             bits_prop: The proportion of each group size to be quantized with a specific number of bits. Must be provided if bits is a list.
             scale_bits: The number of bits used for quantizing the scaling factor.
         """
         self.group_size = group_size
         self.scale_bits = scale_bits
-        self.total_groups = (self.rows + self.group_size -
-                             1) // self.group_size
+        self.bits = bits
+        groups = 0
+        remaining_rows = self.rows
+        self.bits_groups = []
 
-        if isinstance(bits, list):
-            self.bits = bits
-            g128 = (self.rows + 128 - 1) // 128
-            self.bits_groups = [
-                max(round(g128 * p), 1) * 128 // self.group_size
-                for p in bits_prop
-            ]
-            e = sum(self.bits_groups) - self.total_groups
-            self.bits_groups[-1] -= e
-        else:
-            self.bits = [bits]
-            self.bits_groups = [self.total_groups]
+        for b, p in zip(self.bits, bits_prop):
+            assert p > 0
+            gsz = self.group_size[b]
+            g = math.ceil(min(self.rows * p, remaining_rows) / gsz)
+            groups += g
+            remaining_rows -= g * gsz
+            self.bits_groups.append(g)
+
+        assert remaining_rows <= 0
+        self.total_groups = groups
 
     def add_batch(self, inp: torch.Tensor) -> None:
         """
@@ -187,40 +187,38 @@ class GPTQ:
             qscale_max = []
             qgroups = []
 
-            bits_idx = -1
-            bits_idx_r = 1
-
             error = weights.clone()
+            group_idx = 0
+            group_idx_list = []
+            b = 0
+            for bits_idx, bits in enumerate(self.bits):
+                self.quantizer = AdaptiveQuantizer()
+                self.quantizer.configure(bits=bits,
+                                         scale_bits=self.scale_bits)
 
-            for group in range(self.total_groups):
-                a = group * self.group_size
-                b = min(a + self.group_size, self.rows)
-                bits_idx_r -= 1
-                if bits_idx_r == 0:
-                    bits_idx += 1
-                    bits_idx_r = self.bits_groups[bits_idx]
-                    bits = self.bits[bits_idx]
-                    self.quantizer = AdaptiveQuantizer()
-                    self.quantizer.configure(bits=bits,
-                                             scale_bits=self.scale_bits)
+                for group in range(self.bits_groups[bits_idx]):
+                    a = b
+                    b = min(a + self.group_size[bits], self.rows)
 
-                qgroups.append(bits)
-                qgroups.append(0)
+                    qgroups.append(bits)
+                    qgroups.append(0)
 
-                self.quantizer.find_params(weights[a:b, :])
-                scale.append(self.quantizer.scale)
-                qscale.append(self.quantizer.qscale)
-                qscale_max.append(self.quantizer.qscale_max)
+                    self.quantizer.find_params(weights[a:b, :])
+                    scale.append(self.quantizer.scale)
+                    qscale.append(self.quantizer.qscale)
+                    qscale_max.append(self.quantizer.qscale_max)
 
-                ext_c.quantize_range(
-                    quants, self.quantizer.scale,
-                    self.qweight if keep_qweight else none_tensor,
-                    self.quantizer.zero, self.quantizer.maxq, self.hessian_inv,
-                    weights, error, a, b)
+                    ext_c.quantize_range(quants, self.quantizer.scale,
+                                         self.qweight if keep_qweight else none_tensor,
+                                         self.quantizer.zero, self.quantizer.maxq,
+                                         self.hessian_inv,
+                                         weights, error, a, b)
+
+                    group_idx_list += [group_idx] * (b - a)
+                    group_idx += 1
 
             # Create g_idx to store inverse activation order
-            rows = [i // self.group_size for i in range(self.rows)]
-            self.g_idx = torch.tensor(rows, dtype=torch.int32, device=self.dev)
+            self.g_idx = torch.tensor(group_idx_list, dtype=torch.int32, device=self.dev)
             self.invperm = torch.argsort(self.perm)
             self.g_idx = self.g_idx[self.invperm]
 
@@ -288,7 +286,6 @@ class GPTQ:
             key += "."
         output[key + "q_invperm"] = self.invperm.to(torch.int).cpu()
         output[key + "q_scale_max"] = self.qscale_max.cpu()
-        output[key + "q_groups"] = self.qgroups.cpu()
         columns = self.columns
         rem_rows = self.rows
         padding = -columns % 32
@@ -314,7 +311,7 @@ class GPTQ:
             bits = self.qgroups[i * 2].item()
             self.qgroups[i * 2 + 1] = out_row
             i += 1
-            rows = min(self.group_size, rem_rows)
+            rows = min(self.group_size[bits], rem_rows)
             wpqr = 32 / bits
             qrows = rows / wpqr
             assert i == self.qgroups.shape[-1] or qrows == int(qrows)
@@ -333,6 +330,7 @@ class GPTQ:
             rem_rows -= rows
 
         qwt_packed = torch.cat(qwt_packed, dim=0)
+        output[key + "q_groups"] = self.qgroups.cpu()
         output[key + "q_weight"] = qwt_packed.cpu()
         if self.layer.bias is not None:
             output[key + "bias"] = self.layer.bias.clone().half().cpu()
